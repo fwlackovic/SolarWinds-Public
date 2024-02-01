@@ -1,0 +1,62 @@
+-- This widget uses Node Custom Properties that are specific to my environment. Update or remove these references to work in your environment
+-- Required custom properties:
+-- Device_Priority, Loc_10_Site, Resp_Org, Device_Function
+
+SELECT DISTINCT
+
+[Nodes].Caption AS [Node]
+, [Nodes].DetailsURL AS [_LinkFor_Node]
+, '/Orion/images/StatusIcons/Small-' + [Nodes].StatusIcon AS [_IconFor_Node]
+, [Nodes].CustomProperties.Device_Priority AS [Priority]
+, [Nodes].CustomProperties.Loc_10_Site AS [Site]
+
+-- CASE statement to shorten long device owner names
+-- Replace ${LONG_VALUE} and ${SHORT_VALUE} values with each Resp_Org value you would like to shorten
+-- For example, "COMPANY-COUNTRY-REGION-DISTRICT-OFFICE" would just become "OFFICE" to conserve space
+, CASE
+WHEN [Nodes].CustomProperties.Resp_Org LIKE '${LONG_VALUE}' THEN '${SHORT_VALUE}' 
+ELSE [Nodes].CustomProperties.Resp_Org
+END AS [Owner]
+
+, CASE
+WHEN [Nodes].CustomProperties.Device_Function IS NULL THEN 'UNKNOWN'
+ELSE [Nodes].CustomProperties.Device_Function
+END AS [Function]
+
+-- Display the Vendor icon for each down Node if available. If not, use the "Unknown.gif" gray circle icon
+, CASE
+WHEN ([Nodes].VendorIcon IS NULL OR [Nodes].VendorIcon = '') THEN '/NetPerfMon/Images/Vendors/Unknown.gif'
+ELSE ('/NetPerfMon/Images/Vendors/' + [Nodes].VendorIcon)
+END AS [_IconFor_Function]
+
+-- Convert alert trigger time to Local timezone
+, ToLocal([AlertObjects].AlertActive.TriggeredDateTime) AS [Down Time]
+
+-- This CASE section calculates the time since the Node went down and formats it in the number of days, hours, and minutes
+, CASE
+WHEN TOSTRING(FLOOR(HOURDIFF([AlertObjects].AlertActive.TriggeredDateTime,GETUTCDATE())/24)) <> 0
+THEN CONCAT(TOSTRING(FLOOR(HOURDIFF([AlertObjects].AlertActive.TriggeredDateTime,GETUTCDATE())/24)), 'd') ELSE ''
+END + ' '
+
+, CASE
+WHEN TOSTRING(FLOOR(MINUTEDIFF([AlertObjects].AlertActive.TriggeredDateTime,GETUTCDATE())/60.0 % 24)) <> 0
+THEN CONCAT(TOSTRING(FLOOR(MINUTEDIFF([AlertObjects].AlertActive.TriggeredDateTime,GETUTCDATE())/60.0 % 24)), 'h') ELSE ''
+END + ' '
+
+, CASE
+WHEN TOSTRING(FLOOR(MINUTEDIFF([AlertObjects].AlertActive.TriggeredDateTime,GETUTCDATE())%60)) <> 0
+THEN CONCAT(TOSTRING(FLOOR(MINUTEDIFF([AlertObjects].AlertActive.TriggeredDateTime,GETUTCDATE())%60)), 'm') ELSE ''
+END AS [Outage Duration]
+
+FROM Orion.AlertObjects [AlertObjects]
+JOIN Orion.Nodes [Nodes] ON [Nodes].Uri = [AlertObjects].EntityUri
+
+WHERE [AlertObjects].AlertActive.TriggeredMessage <> ''
+AND [AlertObjects].AlertConfigurations.Name = 'Node is down' -- Uses the out-of-the-box "Node is down" alert that should trigger for each node
+AND [Nodes].CustomProperties.Device_Priority <> 4 -- Excludes nodes with a Priority 4. We use this to exclude DEV or non-critical nodes that do not require a NOC response
+AND [Nodes].Status = '2'
+
+-- Order widget results by Device_Priority, time of outage, and node caption. 
+ORDER BY [Nodes].CustomProperties.Device_Priority ASC -- ASC because Priority 1 is highest in my organization. Priority 4 is lowest
+, [AlertObjects].AlertActive.TriggeredDateTime DESC -- DESC to get the latest outages on top for each Priority level
+, [Nodes].Caption ASC -- Finally, order by Node Caption alphabetically
