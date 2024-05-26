@@ -1,0 +1,84 @@
+#region Set up SolarWinds Connection
+
+#Define required Module.
+$moduleName = 'SwisPowerShell'
+
+#Check for required Module. If not found, attempt to import.
+if (-not (Get-Module -Name $moduleName -ErrorAction SilentlyContinue)) {
+    Import-Module $moduleName
+}
+
+#Check again for required Module after attempting import. If not found, abort script.
+
+if (-not (Get-Module -Name $moduleName -ErrorAction SilentlyContinue)) {
+    exit
+}
+
+# Define SolarWinds Credentials and Establish SWIS Connection
+$swisConnection = Connect-Swis -hostname "solarwindsServer.domain.local" -UserName 'admin' -Password 'C0mpl3xP@ssw0rd'
+
+# Test SWIS Connection.
+$connectionTestQuery =
+    "
+    SELECT TOP 10 Caption
+    FROM Orion.Nodes
+    "
+
+$connectionTestResults = Get-SwisData $swisConnection $connectionTestQuery
+
+#endregion Set up SolarWinds Connection
+
+$log_directory = "C:\inetpub\logs\LogFiles\W3SVC1\"
+$summary_view_regex = "\/Orion\/SummaryView\.aspx ViewID=(\d{1,}).*?443.*?(${DOMAIN}\\${USERNAME_PATTERN})" # Update ${DOMAIN} and ${USERNAME_PATTERN} to match your domain and username regex.
+
+$latest_log_file = Get-ChildItem -Path $log_directory -Filter *.log |
+                   Sort-Object LastWriteTime -Descending |
+                   Select-Object -First 1
+
+# Check if we grabbed the IIS log file
+if ($latest_log_file) {
+    #Get the content of the latest log file
+    $log_content = Select-String -Path $latest_log_file.FullName -Pattern $summary_view_regex
+    
+    #Extract unique ViewIDs and last username for each ViewID
+    $view_ids_to_user = @{}
+    foreach ($line in $log_content) {
+        if ($line -match $summary_view_regex) {
+            $view_id = $matches[1]
+            $sw_username = $matches[2]
+            $view_ids_to_user[$view_id] += @($sw_username)
+        }
+    }
+    
+    #Display unique ViewIDs
+    $unique_view_ids = $view_ids_to_user | Sort-Object -Unique
+    
+    #Format ViewIDs to use in SW SWQL query
+    $swql_filter = @()
+
+    foreach ($unique_view_id in $unique_view_ids.Keys) {
+        $swql_filter += ("'$unique_view_id',")
+    }
+
+    $views_swql_filter = $swql_filter -join [System.Environment]::NewLine
+    $views_swql_filter = $views_swql_filter.Substring(0,$views_swql_filter.Length-1)
+
+    $swis_views_query = "SELECT TOP 1000 ViewID, ViewGroupName, ViewTitle FROM Orion.Views WHERE ViewID IN($views_swql_filter)"
+    $swis_views_results = Get-SwisData $swisConnection $swis_views_query 
+    
+    # Add the last user to access a ViewID from IIS log to the SWQL query results
+    foreach ($result in $swis_views_results) {
+        $last_user = $view_ids_to_user["$($result.ViewId)"][-1]
+        $unique_users = $view_ids_to_user["$($result.ViewId)"] | Select-Object $_ -Unique
+        $count_of_views = $view_ids_to_user["$($result.ViewId)"].Count
+        $result | Add-Member -MemberType NoteProperty -Name LastAccessedUser -Value $last_user -Force
+        $result | Add-Member -MemberType NoteProperty -Name UniqueUserVisits -Value $unique_users -Force
+        $result | Add-Member -MemberType NoteProperty -Name NumberOfVisits -Value $count_of_views -Force
+    }
+        
+    # Output combined results
+    $swis_views_results | Format-Table -AutoSize
+      
+} else {
+    Write-Output "Unable to load log file from directory"
+}
