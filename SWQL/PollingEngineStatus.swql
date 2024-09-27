@@ -1,0 +1,38 @@
+SELECT
+
+[E].ServerName AS [Server]
+, [N].DetailsURL AS [_LinkFor_Server]
+, '/Orion/images/StatusIcons/Small-' + [N].StatusIcon AS [_IconFor_Server]
+, [E].IP
+, [E].ServerType
+, '/Orion/Admin/Details/Engines.aspx' AS [_LinkFor_ServerType]
+, [E].Elements
+, [E].Nodes
+, [E].Interfaces
+, [E].Volumes
+, [E].PollingCompletion AS [Polling Completion (%)]
+, [E].PollingUsage.CurrentUsage AS [Poller Utilization (%)]
+, [E].MinutesSinceKeepAlive AS [Keep Alive (Minutes)]
+
+, CASE 
+WHEN [E].PollingCompletion < 99 THEN '/Orion/images/ActiveAlerts/Serious.png'
+WHEN [E].PollingCompletion >= 99 THEN '/Orion/images/ActiveAlerts/Check.png'
+END AS [_IconFor_Polling Completion (%)]
+
+, CASE
+WHEN [E].MinutesSinceKeepAlive >= 2 THEN '/Orion/images/ActiveAlerts/Serious.png'
+WHEN [E].MinutesSinceKeepAlive < 2 THEN '/Orion/images/ActiveAlerts/Check.png'
+END AS [_IconFor_Keep Alive (Minutes)]
+
+, CASE
+WHEN [E].Elements > 11500 THEN '/Orion/images/StatusIcons/Small-Down.gif'
+WHEN [E].Elements < 11500 AND [E].Elements > 9000 THEN '/Orion/images/StatusIcons/Small-Warning.gif'
+WHEN [E].Elements < 9000 THEN '/Orion/images/StatusIcons/Small-Up.gif'
+END AS [_IconFor_Elements]
+
+FROM Orion.Engines [E]
+JOIN Orion.Nodes [N] ON [N].Caption = [E].ServerName
+
+WHERE [E].PollingUsage.ScaleFactor = 'Orion.Standard.Polling'
+
+ORDER BY [E].ServerName
